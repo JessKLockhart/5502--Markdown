@@ -1,0 +1,470 @@
+---
+title: "Covariation of life-history traits across North American mammals:"
+subtitle: "An exploratory data analysis prepared for BIOL 5502W - Biological Data Science in R, Carleton University, Ottawa ON"
+author: "Jessica Lockhart"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    df_print: paged 
+    theme: sandstone
+
+---
+<!-- Font styles: -->
+<style type="text/css">
+h1.title {
+  font-size: 34px;
+}
+h3.subtitle {
+  color: Yellowgreen;
+  font-style: italic;
+  font-size: 24px;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Packages:
+library(tidyverse)
+library(patchwork)
+library(bslib)https://github.com/JessKLockhart/5502--Markdown.git
+library(jtools)
+```
+***
+
+##### **Goal**:
+The overarching goal of this exploratory data analysis is to investigate the degree of covariation between life-history traits - namely mobility, annual fecundity and body size - across species of North American mammals. 
+
+##### **Background**:
+When expressed on a log-scale, both mobility and annual fecundity in mammals are linearly related to body size through what is known as an allometric relationship, or biological scaling (Allainé et al. 1987, Bowman et al. 2002). Because mobility and fecundity are *both* related to body size, these life-history traits should also covary across species of mammals. However, if we remove the effects of body size, mobility and annual fecundity should no longer covary, at least not to the same degree. 
+
+To test these predictions, we use COMBINE, a publicly available database, compiled by Soira et al.(2021). This database contains empirical data on life-history traits, extracted from the literature, for over 6000 species of mammals from across the globe. COMBINE was published in the Data Papers section of Ecology, and is availble electronically as Supporting Information from the online version of the article - Soira et al. 2021. Ecology, 102(6),e03344: http://onlinelibrary.wiley.com/doi/10.1002/ecy.3344/suppinfo 
+
+This exercise represents an important exploratory step in my research at Carleton University, which aims to examine the relative roles of mobility and fecundity in species responses to land-use change. By reducing the potential collinearity between these covariates, we may be able to estimate their independent effects.
+
+```{r Read in COMBINE dataset, include=FALSE}
+trait <- read_csv('COMBINE.csv') # read in COMBINE.csv - this is the mammal trait data we will be using for this analysis
+```
+
+##### **Description of the data structure**:
+Each row in the COMBINE dataset represents an observation for a single species of mammal; the data is therefore tidy. The columns contain information on the order, family, genus and scientific name (listed under both phylacine_binomial and iucn2020_binomial) of each species, as well as 54 different life-history traits. Life-history traits range from traits such as mean adult body mass and maximum longevity to habitat breadth. There are `r nrow(trait)` species of mammals included in this dataset, representing `r n_distinct(trait$order)` distinct orders,  `r n_distinct(trait$family)` families and `r n_distinct(trait$genus)` genera. Here is an example of what the first few rows of this dataset look like:
+
+```{r Examine the first few rows of COMBINE data, echo=FALSE}
+head(trait,3)
+```
+
+##### **Transforming and wrangling the data**:
+As we can see, the dataset does not include information on the geogrpahic range or continent(s) in which each species can be found. However, in order to be able to limit our anlysis to North American species, we need to know which species occur where. To address this problem, we need to use an additional dataset, which includes a list of North American mammals (compiled from https://www.wildlifenorthamerica.com/A-Z/Mammal/common.html). Here is what the first few rows of this second dataset look like: 
+
+```{r Read in NAspp, include=FALSE}
+NAspp <- read_csv('NA_Mammals.csv') # reads in list of North American mammal species. Note that there are parentheses surrounding the scientific name of each species - these will need to be removed
+```
+
+```{r Examine the first few rows of NAspp, echo=FALSE}
+head(NAspp,3)
+```
+
+As we can see, each row in this second dataset represents a single species of mammal native to North America. There are only 2 columns included: one column listing the species' common name and a second column listing the species' scientific name. Although only 3 rows are shown in the table above, there are a total of `r nrow(NAspp)` species included in this dataset. 
+
+In order to select only North American species from our COMBINE dataset (i.e. the first dataset), we filter the 'phylacine_binomial' column of this dataset by the 'Scientific Name' column in our second dataset (i.e., the list of North American species). In addition, we add each species' common name from the second dataset to our COMBINE dataset, and select only the traits we are interested in. Given that the traits we are interested include body size, fecundity and mobility, we select adult_mass_g (adult mass in grams), litter_size_n (number of offspring born per litter per year), litter_per_year (number of litters per female per year) and home_range_km2 (size of area in which individuals or groups use to carry-out activities, i.e., forage, hunt, calve, etc.). 
+
+```{r Filter in North American species, include=FALSE}
+# Before we can filter the data will need to remove the parentheses from the NAspp$`Scientific Name` column: 
+NAspp$`Scientific Name` <- str_replace_all(NAspp$`Scientific Name`, "[()]", "") # removes parantheses from NAspp$`Scientific Name` column
+
+# Now that we have removed the parantheses from the NAspp$`Scientific Name` column, we should be able to filter the trait data.frame using the variables trait$phylacine_binomial and NAspp$`Scientific Name`. Let's rename the filtered data.frame 'trait_2':
+trait_2 <- trait%>% 
+  filter(phylacine_binomial %in% NAspp$`Scientific Name`) # filters data to include only species that occur in North America 
+
+nrow(trait_2) # Although we had 213 species in the NAspp data.frame, after filtering we only have 207 species of mammals in our new dataset. To find out which species are missing from the list of 213 let's do some additional investigating:
+
+# First, let's determine which rows in NAspp were and were not present in trait$phylacine_binomial:
+ind <- which(NAspp$`Scientific Name` %in% trait$phylacine_binomial =="FALSE") # returns the rows for which NAspp$`Scientific Name` was not in trait$phylacine_binomial.
+
+# Next, we will index NAspp by the entries not in trait$phylacine_binomial to determine which species we are missing:
+missingSpp <- NAspp[ind,] 
+missingSpp # six species of chipmunks from the genus Tamias, as well as the species harp seal, jaguarundi, and margay are missing. 
+
+# After some investigating (i.e.,googling) it appears that the genus name 'Tamias' has changed to 'Neotamias' for the 6 species of missing chipmunks. Because the COMBINE database was compiled in 2021 I suspect that it contains the updated genus name 'Neotamias'. To check whether or not this is true, let's change the genus name from 'Tamias' to 'Neotamias' for the 6 species of chipmunk in NAspp and refilter the data:  
+NAspp$`Scientific Name` <- ifelse(NAspp$`Scientific Name`== "Tamias alpinus"|NAspp$`Scientific Name`== "Tamias amoenus"|NAspp$`Scientific Name`== "Tamias dorsalis"|NAspp$`Scientific Name`== "Tamias minimus"|NAspp$`Scientific Name`== "Tamias quadrivittatus"|NAspp$`Scientific Name`== "Tamias rufus", gsub("Tamias", "Neotamias", NAspp$`Scientific Name`), NAspp$`Scientific Name`) # changes genus name to 'Neotamias'
+
+trait_2 <- trait%>% 
+  filter(phylacine_binomial %in% NAspp$`Scientific Name`) # refilters data
+
+trait_2 %>% 
+  filter(phylacine_binomial== "Neotamias alpinus"|phylacine_binomial== "Neotamias amoenus"|phylacine_binomial== "Neotamias dorsalis"|phylacine_binomial== "Neotamias minimus"|phylacine_binomial== "Neotamias quadrivittatus"|phylacine_binomial== "Neotamias rufus") # after refiltering using the genus name 'Neotamias' all six of the missing chimpmunk species are included in our dataset.
+
+nrow(trait_2) # there are now 213 species included in our dateset of North American mammals. In terms of the 3 other missing species, it is possible that the COMBINE database didn't actually include them for various reasons, such as not having data available on these species in the literature. Therefore, we won't worry about including these species in our analysis. What we will focus on, is the fact that we now have 213 out of 213 species in our North American dataset, when we know that 3 species are still missing. To understand where the 3 addtional species are coming from, let's do some additional investigating: 
+
+# First let's check for duplication in species name:
+ind2 <- which(duplicated(trait_2$phylacine_binomial) =="TRUE") # returns the rows that have duplicated scientific names. There are 3 rows with duplicated names
+(dupl_spp <- trait_2[ind2,]) # indexes trait_2 by the rows that have duplicated scientific names. Cervus elaphus, Lasiurus blossevillii and Urocitellus brunneus appear twice. This explains why there are 3 more species than expected
+
+# Next, let's confirm that the trait information for each duplicate species is redundant:
+(trait_2%>%
+  filter(phylacine_binomial == "Cervus elaphus" | phylacine_binomial == "Lasiurus blossevillii" | phylacine_binomial == "Urocitellus brunneus")) # the trait information for each duplicate species is redundant, so now we can remove the duplicate species from our dataset:
+trait_2<- trait_2[-ind2,] # removes duplicates
+
+# After removing the duplicates, there are 210 rows in the trait_2 data.frame; each row represents a unique species:
+nrow(trait_2) # 210 rows
+unique(trait_2$phylacine_binomial) # 210 unique species
+# In addition, there are 9 unique orders, 39 families and 124 genera represented in the dataset:
+unique(trait_2$order) 
+unique(trait_2$family) 
+unique(trait_2$genus) 
+```
+
+```{r Add common name from NAspp to trait_2, include=FALSE}
+# Next, let's use the merge() function to add each species common name from the NAspp data.frame:
+(trait_2 <- trait_2%>%
+  rename(`Scientific Name` = phylacine_binomial)%>%
+  merge(NAspp, by= "Scientific Name"))
+```
+
+```{r Select columns of interest, include=FALSE}
+# Now that we have a dataset with North American species, the next step is to select only the columns that contain the information we are interested in. The COMBINE database contains information on 54 different life-history traits, each in its own column. The traits that we are interested in are mobility,fecundity, and body size. Let's go ahead and select the columns that contain this information:
+trait_2<- trait_2 %>%
+  select(`Scientific Name`, order, family, genus, species,adult_mass_g,litter_size_n, litters_per_year_n, home_range_km2, `Common Name`) # the following traits have been retained: adult_mass_g (adult mass in grams), litter_size_n (number of offspring born per litter per year), litter_per_year (number of litters per female per year) and home_range_km2 (size of area in which individuals or groups use to carry-out activities, i.e., forage, hunt, calve, etc.)
+```
+
+Lastly, we transform the data into a more usuable format. We start by converting adult_mass_g into kilograms, making a new variable called 'adult_mass_kg.' This will be used as an index of body size. We then calculate the number of offspring produced per year per female for each species by multiplying the number of offpring per litter by the number of litters per year. We call this new variable 'annual_fecund.' This will be used as an index of annual fecundity. We leave 'home_range_km2' as is. This trait will be used as an index of mobility. We now have `r nrow(trait_2)` species in our dataset. Note that 3 species in our list of North American mammals were not present in the COMBINE dataset, which is why we are left with only 210 species, instead of 213.
+
+```{r Create adult_mass_kg, include=FALSE}
+# Now that we have selected the traits of interest, our next step to transform the data into a more usuable format:
+
+# First, let's convert adult_mass_g into kilograms, making a new column called 'adult_mass_kg.' This will be used as an index of body size:
+trait_2 <- trait_2%>%
+  mutate(adult_mass_kg = adult_mass_g/1000)
+
+```
+
+```{r Create annual_fecund, include=FALSE}
+# Next, let's calculate the number of offspring produced per year per female for each species by multiplying the number of offpring per litter by the number of litters per year. We will store this data in a new column called 'annual_fecund.' This will be used an index of annual fecundity:
+trait_2 <- trait_2 %>%
+  mutate(annual_fecund = litter_size_n * litters_per_year_n)
+```
+
+Here are the columns now in included in our dataset, as well as the first few rows of species:
+
+```{r Examine the final columns in our dataset, echo=FALSE}
+head(trait_2, 3)
+```
+
+##### **Hygiene checks**:
+After completing a series of hygiene checks on each of the three traits of interest, we remove an additional 96 species from our dataset. We remove each of these species because they are missing data for home range size. By removing these species, rather than leaving them in our dataset, we lose data for both adult body mass and annual fecundity; on the other hand, by dropping them, we ensure that each of the linear models, which we describe in the next section of our EDA, contain data from the same set of species. 
+
+```{r Hygiene checks - adult_mass_kg, include=FALSE}
+# In this step, we will explore each trait, looking for any errors or obvious patterns, starting with 'adult_mass_kg':
+
+class(trait_2$adult_mass_kg) # as expected, the data are numeric
+summary(trait_2$adult_mass_kg) # the mass of species ranges from less than 1 kg to 149000 kg. The median mass is 1.74 kg indicating that there are many small mammals in our dataset. The mean mass is 2114.75 kg. 
+sum(is.na(trait_2$adult_mass_kg)) # there are no NAs
+sum(is.nan(trait_2$adult_mass_kg)) # there are no NANs
+trait_2%>%
+  pull(adult_mass_kg)%>%
+  qplot(ylab="Count", color=I("black"), main="Distribution of mass (kg)") # the data are right skewed with many small mammals appearing in the dataset. There are also a few unusually large species, which we will investigate further:
+trait_2 %>% 
+  filter(adult_mass_kg >= 5000) %>% 
+  select(order, family,`Common Name`, adult_mass_kg)%>%
+  arrange(-adult_mass_kg) # there are 11 species with unusually high weights (>5000 kg), all belonging to the order Cetartiodactyla. This order includes whales, dolphins and even-toed ungulates - all very large species. Indeed, all species in our dataset with weights > 5000kg are whales; large weights, such as these, are normal for these species.
+
+# Note that the average weights between orders vary quite a bit. Chiroptera, which includes bats, has a mean adult body size of 0.0117 kg; whereas the mean adult body mass for the order Cetartiodactyla is 8774 kg:
+trait_2 %>% 
+  group_by(order)%>%
+  summarise(average=mean(adult_mass_kg))%>%
+  arrange(average) 
+
+# Let's look at the distribution of mammal body weights across all orders:
+trait_2 %>% 
+  ggplot(aes(adult_mass_kg)) +
+  geom_histogram() +
+  xlab("Body mass in grams") + 
+  ggtitle("Distribution of mammal body mass across order") +
+  facet_wrap(~order, scales = 'free') # orders carnivora and rodentia are right skewed. Let's investigate these orders a little further to check for any potential errors: 
+
+trait_2 %>% 
+  filter(adult_mass_kg >= 750 & order=="Carnivora") %>% 
+  select(order, family,`Common Name`, adult_mass_kg)%>%
+  arrange(-adult_mass_kg) # elephant seal and walrus are two species in the order carnivora with unusally high weights, but again, these weights aren't actually unusual for these species; therefore it does not seem likely that these errors in the data
+
+trait_2 %>% 
+  filter(adult_mass_kg >= 15 & order=="Rodentia") %>% 
+  select(order, family,`Common Name`, adult_mass_kg)%>%
+  arrange(-adult_mass_kg) # here we can see that within the order rodentia, beaver has an unusually high weight of almost 20 kg, which, again, is quite typical of this species. 
+```
+
+```{r Hygiene check - annual_fecund, include=FALSE}
+# There are no obvious errors in 'adult_mass_kg', so let's move on to 'annual_fecund':
+
+class(trait_2$annual_fecund) # as expected, the data are numeric
+sum(is.na(trait_2$annual_fecund)) # there are no NAs
+sum(is.nan(trait_2$annual_fecund)) # there are no NANs
+summary(trait_2$annual_fecund) # annaul fecundity ranges from less than 1 offspring per female/year to about 28 offspring per female/year. The median offspring produced per female/year is 3.4 and the mean is 4.8 
+
+trait_2%>%
+  pull(annual_fecund)%>%
+  qplot(ylab="Count", color=I("black"), main="Distribution of annual fecundity") # once again, the data are right skewed. There is a high frequency of species with an annual fecundity of around 3 offspring/female/year. There appears to be an unusually high value in the dataset; let's investigate further:
+
+trait_2 %>% 
+  filter(annual_fecund >= 25) %>% 
+  select(order, family,`Common Name`, annual_fecund)%>%
+  arrange(-annual_fecund) # here we can see that within the order rodentia, singing vole has an unusually high annual fecundity with almost 28 offspring produced per female/year. After doing some research, it turns out this species can have up to 3 litters/year with as many as 6- 14 offspring per litter.
+
+# Like body mass, the average annual fecundity between orders varies quite a bit. Females of species in the orders Sirenia (manatees, sea cows and dugons) and Cetartiodactyla (whales, dolphins and un-even toed ungulates) produce, on average, less than 1 offpring per year, compared to females of species in the orders Lagomorpha (hares, rabbits and pika) and Didelphimorphiahas (opossums), which produe, on average, more than 12 offspring per year:
+trait_2 %>% 
+  group_by(order)%>%
+  summarise(average=mean(annual_fecund))%>%
+  arrange(average) 
+
+```
+
+```{r Hygiene check - home_range_km2, include=FALSE}
+# There are no obvious errors in 'annual_fecund', so, next, let's look at 'home_range_km2':
+
+class(trait_2$home_range_km2) # as expected, the data are numeric
+sum(is.na(trait_2$home_range_km2)) # there are 96 NAs - meaning lots of missing data 
+sum(is.nan(trait_2$home_range_km2)) # there are no NANs
+summary(trait_2$home_range_km2) # home range size ranges from 0.00 km to 79244.72 km. The median home range size is 0.04 km and the mean is 1410.79 km. 
+
+# First, let's look at which species have an 'NA' for home range:
+homerange_na <- is.na(trait_2$home_range_km2)
+ind3 <- which(homerange_na==TRUE)
+homerange_na <- trait_2[ind3,]  
+table(homerange_na$order) # species with NA come from a wide range of orders, with the most coming from the order Cetartiodactyla, which agin represents whales, dolphins and even-toed ungulates
+
+# Next, let's investigate the species with a home range of 0 as this seems like it could be an error in the dataset:
+trait_2%>%
+  filter(home_range_km2 == 0) # four species - giant kangeroo rat, meadow vole, California ground squirrel and Botta's Pocket Gopher have a value of zero entered under home range. It turns out that these species actually have very small home ranges - only a couple hundred metres squared -  so the values must have been rounded down to zero when entered into the database. Because later on in our analysis we will be taking the log values of each trait, let's replace 0 with a small postive value; otherwise we will run into issues:
+
+trait_2$home_range_km2 <- as.numeric(ifelse(trait_2$home_range_km2==0, 0.0001,trait_2$home_range_km2)) # changes home range values from 0 to 0.0001
+
+trait_2%>%
+  pull(home_range_km2)%>%
+  qplot(ylab="Count", color=I("black"), main="Distribution of home range") # Looking at the distribution of home range size across species we can see that there is a high frequency of species with relatively small home ranges and a couple of unusually high home ranges. Let's investigate these high values further:
+
+trait_2 %>% 
+  filter(home_range_km2 >= 70000) %>% 
+  select(order, family,`Common Name`, home_range_km2)%>%
+  arrange(-home_range_km2) # Both orca and polar bear have home ranges of more than than 70000 km2. It seems unlikely that these are due to errors in the data, as both species travel long distances in search of food.
+
+# Let's look at the distribution of mammal home range across all orders:
+trait_2 %>% 
+  ggplot(aes(home_range_km2)) +
+  geom_histogram() +
+  xlab("Home range (km2)") + 
+  ggtitle("Distribution of mammal home range across orders") +
+  facet_wrap(~order, scales = 'free') # there are a few species within the orders Rodentia anad Lagomorpha with unusually high values (note that we already identified polar bear and orca as species with unusually high values within orders Carnivora and Cetartiodactyla) Let's investigate Rodentia and Lagomorpha some more:
+
+trait_2 %>% 
+  filter(home_range_km2 >= 0.1 & order=="Rodentia") %>% 
+  select(order, family,`Common Name`, home_range_km2)%>%
+  arrange(-home_range_km2) # eastern fox squirrel, Franklin's ground squirrel and porcupine all have home ranges larger than 0.1 km2. While this is unusual for North American species belonging to the order Rodentia, these values appear to be typical of these species and are therefore not likely due to error.
+
+trait_2 %>% 
+  filter(home_range_km2 >= 2 & order=="Lagomorpha") %>% 
+  select(order, family,`Common Name`, home_range_km2)%>%
+  arrange(-home_range_km2) # Arctic hare has a home range of more than 2 km2, which again is relatively high for species in this order, but not unusual for this species. 
+
+```
+
+```{r Remove rows with missing data, include=FALSE}
+# There are no other obvious errors in 'home_range_km2', so now we're ready to look at the pairwise relationships between the three different traits. But before we do this, we will need to omit NAs in 'home_range_km2'using the na.omit () function. This will remove any row containing 'NA' in the home_range_km2 column. Although this will also result in dropping data for both adult body mass and annual fecundity, this step is necessary to ensure that each pairwise comparison contains data from the same set of species.
+
+trait_2 <- trait_2%>%
+  na.omit(home_range_km2)
+```
+We now have `r nrow(trait_2)` species, from `r n_distinct(trait_2$order)` orders, with the largest representation of species coming from the orders Rodentia (n = 52) and Carnivora (n = 32), which we can see in the bar graph below:
+
+```{r Barplot of order, echo=FALSE, fig.height=5, fig.width=7, message=FALSE, warning=FALSE}
+trait_2%>%
+  ggplot(aes(order)) + 
+  geom_bar(fill="lightblue", colour = "black")+
+  xlab ("Order") +
+  ylab ("Count") +
+  ggtitle("Number of species in each of 7 orders in our dataset") +
+  theme_bw() + 
+  theme(plot.title = element_text(size = 12))
+```
+
+Next, we plot the distribution of each trait - note that both body mass and home range size have been plotted on a log-scale due to the wide range in values across species. Looking at the distribution of body mass, we can see a dense concentration of species with weights close to 1 kg; in addition the data are slightly right skewed. This isn't surprising given that we have a few very large species of mammals in our dataset. 
+
+When we look at the distribution of annual fecundity, we see a high concentration of species producing close to 4 offspring per female/year. In addition the data are strongly right skewed. There are a few species with much higher rates of fecundity than the majority of species in our dataset; note that these species were investigated during the hygiene check we completed earlier. 
+
+When we look at the distribution of home range size we see a bimodal distribution. Specifically, we can see two distinct concerations of species: one group with homerange sizes around 0.01 km^2 and another group with a homerange sizes around 10 km^2. In addition, we see a tail to the right, meaning that there are a few species with very large home ranges in our dataset.  
+
+In general, the diversity we see across mammals as a taxon is huge. Some groups or orders of species have much larger or smaller body sizes, produce more or less offspring and show much smaller or larger movement patterns than others.
+
+```{r Distribution plots of body mass,fecundity and mobility, fig.height=5, fig.width=7, echo=FALSE}
+# First, we make a density plot for each of body size, annual fecundity, and mobility
+dist_bs <- ggplot(trait_2, aes(x=adult_mass_kg)) +
+  geom_density(fill='lightblue', alpha=0.5)+
+  scale_x_log10() + 
+  xlab ("Log of Body mass (kg)") + 
+  ylim(0,0.3)
+
+dist_af <- ggplot(trait_2, aes(x=annual_fecund)) +
+  geom_density(fill='lightblue', alpha=0.5) + 
+  xlab ("Annual fecundity") +
+  ylim(0,0.3)
+
+dist_hm <- ggplot(trait_2, aes(x=home_range_km2)) +
+  geom_density(fill='lightblue', alpha=0.5) + 
+  scale_x_log10() + 
+  xlab ("Log of home range size (km^2)") + 
+  ylim(0,0.3)
+# Next, we combine all 3 plots into a single output with a shared y-axis:
+dist_plot <- dist_bs + dist_af +  dist_hm + plot_layout(guides="collect")
+# Removes y-axis labels from  dist_af
+dist_plot[[2]] = dist_plot[[2]] + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),axis.title.y = element_blank() )
+# Removes y-axis labels from dist_hm
+dist_plot[[3]] = dist_plot[[3]] + theme(axis.text.y = element_blank(),axis.ticks.y = element_blank(), axis.title.y = element_blank() )
+dist_plot
+```
+
+##### **Analysis**:
+We begin our analysis by visualizing the relationship between body size and annual fecundity. As mentioned earlier, when expressed on a log-scale, annual fecundity in mammals is expected to be linearly related to body size. Thus, we create a log-log plot and fit a linear model to the data. In addition, we colour each point by order to visualize any obvious patterns or trends across different groups of species.
+
+```{r Scatterplot of body size vs fecundity, echo=FALSE, fig.height=5, fig.width=7, message=FALSE, warning=FALSE, paged.print=FALSE}
+trait_2 %>%
+  ggplot(aes(x = adult_mass_kg, y = annual_fecund))+
+  geom_point(aes(col=order), size = 3) + 
+  scale_x_log10() + # x-axis ticks on original scale
+  scale_y_log10() + # y-axis ticks on original scale
+  geom_smooth(method = "lm", col = "red", se=TRUE) + # liner relationship between body size and annual fecundity
+  ggtitle("Relationship between body size and fecundity in North American mammals") +
+  xlab("Body size (log scale)") + 
+  ylab("Annual fecundity (log scale) ") + 
+  scale_color_discrete(name = "Order") +
+  theme_bw() + 
+  theme(plot.title = element_text(size = 12))
+```
+
+As expected, there appears to be a strong, negative relationship between body size and annual fecundity when these traits are expressed on a log-scale. As body size increases, annual fecundity decreases. This relationship is apparent across orders but also within orders - particularly Carnivora, Cetartiodactyla, and Rodentia, for which there is adequate representation. In general, we can see that species in the orders Rodentia and Lagomorpha (hares, rabbits and pikas) are smaller with higher annual fecundity compared to species in the orders Carnivora and Cetariodactyla (whales, dolphins and even-toed ungulates). 
+
+Looking at the linear model, we see that the relationship between body size and annual fecundity is significant (p-value < 0.05) with an R-squared value of 0.65. In addition, the slope estimate is -0.26:
+```{r Model 1, include=FALSE}
+mod1 <- lm(log10(trait_2$annual_fecund) ~ log10(trait_2$adult_mass_kg))
+```
+
+```{r Summary of model 1, echo=FALSE, message=TRUE, warning=TRUE, paged.print=TRUE}
+export_summs(mod1, model.names = "Annual fecundity ~ body size")
+```
+
+Next, we look at the relationship between body size and mobility. This time, we anticipate a positive relationship - that is we expect species' home range size to increase with body size:
+
+```{r Scatterplot of body size vs mobility, echo=FALSE, fig.height=5, fig.width=7, message=FALSE, warning=FALSE}
+trait_2 %>%
+  ggplot(aes(x = adult_mass_kg, y = home_range_km2))+
+  geom_point(aes(col=order), size = 3) +
+  geom_jitter(aes(col=order)) +
+  scale_x_log10() + # x-axis ticks on original scale
+  scale_y_log10() + # y-axis ticks on original scale
+  geom_smooth(method = "lm", col = "red", se=TRUE) + # liner relationship between body size and home range size
+  ggtitle("Relationship between body size and mobility in North American mammals") +
+  xlab("Body size (log scale)") + 
+  ylab("Home range size (log scale) ") + 
+  scale_color_discrete(name = "Order") +
+  theme_bw()+
+  theme(plot.title = element_text(size = 12)) 
+```
+
+As predicted, we see a strong, positive relationship between body size and mobility. As body size increases, mobility also increases. Again, we see this relationship both across and within orders. We note that species within the orders Rodentia and Lagomorpha tend to be smaller-bodied and have smaller home ranges, while species in the order Cetartiodactyla and Carnivora appear to be on the opposite end of this spectrum - that is they are larger-bodied with larger home ranges. 
+
+Looking at the linear model of the relationship between body size and mobility, we see that the relationship is again significant (p-value < 0.05); the R-squared values is 0.72 and the slope estimate is 0.56:
+```{r Model 2, include=FALSE}
+mod2 <- lm(log10(trait_2$home_range_km2) ~ log(trait_2$adult_mass_kg))
+```
+
+```{r Summary of model 2, echo=FALSE}
+export_summs(mod2, model.names = "Home range size ~ body size")
+```
+
+Next, we look at the relationship between annual fecundity and mobility. As a reminder, we expect mobility and fecundity to covary across species given each of their relationships with body size. 
+
+```{r Scatterplot of fecundity vs mobility, echo=FALSE, fig.height=5, fig.width=7, message=FALSE, warning=FALSE}
+(p1 <- trait_2 %>%
+  ggplot(aes(x = annual_fecund, y = home_range_km2))+
+  geom_point(aes(col=order), size = 3) +
+  scale_x_log10() + # x-axis ticks on original scale
+  scale_y_log10() + # y-axis ticks on original scale
+  geom_smooth(method = "lm", col = "red", se=TRUE) + # liner relationship between home range size and annual fecundity
+  ggtitle("Mobility vs annual fecundity") +
+  xlab("Annual fecundity (log scale)") + 
+  ylab("Home range size (log scale)") + 
+  scale_color_discrete(name = "Order") +
+  theme_bw()+
+   theme(plot.title = element_text(size = 12)))
+```
+
+Here we see that there is a strong, negative relationship between annual fecundity and home range size. As annual fecundity increases, home range size decreases, presumably due to their relationships with body size. For example, we know that smaller species of mammals tend to have higher fecundity and lower mobility, and that larger species tend to have lower fecundity and higher mobility. 
+
+Looking at the linear model, we see that the relationship between these two trais is is indeed significant (p<0.05). The R-squared value is 0.58 and the slope estimate is -3.58
+```{r Model 3, include=FALSE}
+mod3 <- lm(log10(trait_2$home_range_km2) ~ log10(trait_2$annual_fecund))
+```
+
+```{r Summary of model 3, echo=FALSE}
+export_summs(mod3, model.names = "Home range size ~ annual fecundity")
+```
+
+Next, what happens if we remove the effects of body size? Will we still see a relationship between mobility and fecundity? 
+
+To answer these questions, we extract the residual variances from the linear regressions used to model the relationships between (1) mobility and body size and (2) annual fecundity and body size. We then use these residuals as indices of mobility and fecundity, independent of body size, and evaluate their relationship to one another. Note that the residual variances from these models represent the variance not explained by body size. For this reason, we can consider the effects of body size to now be statistically removed (i.e., controlled for).
+
+```{r Residual variance, include=FALSE}
+trait_2$resid_fec <- resid(mod1)  # residual variance from the regression between annual fecundity and body size, which we will use as an index of annual fecundity independent of body size
+trait_2$resid_mobil <- resid(mod2) # residual variance from the regression between mobility and body size, which we will use as an index of mobility independent of body size
+```
+
+When we plot residual home range size against residual fecundity, we can see that there is still a negative relationship between mobility and fecundity, after we've removed the effects of body size; however, this relationship appears to be weaker:
+
+```{r Residual plot, echo=FALSE, fig.height=5, fig.width=7, message=FALSE, warning=FALSE}
+# Scatter plot of residual home range size vs residual fecundity:
+(p_resid <- trait_2 %>%
+  ggplot(aes(x = resid_mobil, y = resid_fec))+
+  geom_point(aes(col=order), size = 3) +
+  geom_smooth(method = "lm", col = "red", se=TRUE) + # liner relationship between residual home range size and residual annual fecundity
+  ggtitle("Residual mobility vs residual annual fecundity") +
+  xlab("Residual annual fecundity") + 
+  ylab("Resdiual home range size") + 
+  scale_color_discrete(name = "Order") +
+  theme_bw()+
+   theme(plot.title = element_text(size = 12)))
+```
+
+For comparison, we look at the residual plot next to the original scatterplot:
+
+```{r Scatterplot vs residual plot, echo=FALSE, fig.height=6, fig.width=12, message=FALSE, warning=FALSE}
+p1 + p_resid + plot_layout(guides="collect") 
+```
+
+As we can see the relationship between annual fecundity and mobility is weaker when we remove the effects of body size. In addition, we no longer see obvious patterns within or across orders of species.
+
+Looking at the model output, we can see that the relationship between residual mobility and fecundity is still significant (p-value <0.05). However, the R-squared value is only 0.06, compared to 0.58, and the slope estimate is only -1.01, compared to -3.58 when each of these traits were still confounded with body size:
+
+```{r Model 4, include=FALSE}
+mod4 <- lm(trait_2$resid_mobil ~ trait_2$resid_fec)
+```
+
+```{r Summary of model 4, echo=FALSE, warning=TRUE}
+export_summs(mod4, model.names = "Residual home range size ~ residual annual fecundity")
+```
+
+```{r Correlation between fecundity and mobility, include=FALSE}
+cor1 <- cor(log(trait_2$home_range_km2), log(trait_2$annual_fecund))
+```
+
+```{r Residual correlation, include=FALSE}
+cor2 <- cor(trait_2$resid_mobil, trait_2$resid_fec)
+```
+
+Furthermore, when we remove the effects of body size, the Pearson correlation coefficient, r, is only `r (cor2)`, comprared to `r (cor1)` before controlling for body size. Thus, we can reduce the degree of collinearity between these two traits by removing the effects of body size.
+
+##### **Conclusion**: 
+In this analysis, we used empirical data to explore the degree of covariation between mobility, annual fecundity and body size in North American mammals. As predicted, strong correlations existed between body size and mobility, body size and fecundity, and mobility and fecundity. However, by statistically removing the effects of body size, we were able to reduce the collinearity between annual fecundity and mobility. By reducing the collinearity between these two traits, we should be able to estimate their independent effects on a variety of ecological processes, such as species responses to land-use change. This next step, which is an objective of my PhD research at Carleton University, will hopefully contribute to a better understanding of the mechanisms underlying the variability in species sensitivities to habitat loss and fragmentation. 
+
+##### **Literature cited**:
+Allainé, D. et al. 1987. The relationship between fecundity and adult body weight in Homeotherms. Oecologia 73:478-480
+
+Bowman, J. et al. 2002. Dispersal distance in mammals is proportional to home range size. Ecology 87:2049–2055
+
+Soira C.D. et al. 2021. COMBINE: a coalesced mammal database of intrinsic and extrinsic traits. Ecology, 102(6),e03344: http://onlinelibrary.wiley.com/doi/10.1002/ecy.3344/suppinfo 
