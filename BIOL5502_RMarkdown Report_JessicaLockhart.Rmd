@@ -26,7 +26,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Packages:
 library(tidyverse)
 library(patchwork)
-library(bslib)https://github.com/JessKLockhart/5502--Markdown.git
+library(bslib)
 library(jtools)
 ```
 ***
